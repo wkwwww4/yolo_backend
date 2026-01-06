@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>上傳影片 - yolo_backend</title>
+    <style>
+      body{font-family:Arial,Helvetica,sans-serif;margin:24px}
+      .box{max-width:760px;margin:auto}
+      .file-list{margin-top:16px}
+      .flash{color:green}
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h1>上傳影片</h1>
+      <p>支援格式：mp4, avi, mov, mkv, hevc, h265</p>
+
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <ul class="flash">
+            {% for m in messages %}
+              <li>{{ m }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endwith %}
+
+      <form method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept="video/*" required>
+        <button type="submit">上傳</button>
+      </form>
+
+      <div class="file-list">
+        <h3>目前 video/ 內的檔案</h3>
+        {% if files %}
+          <ul>
+            {% for f in files %}
+              <li><a href="/video/{{ f }}">{{ f }}</a></li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p>目前沒有檔案。</p>
+        {% endif %}
+      </div>
+
+      <div class="file-list">
+        <h3>檢測結果（tracking_results/）</h3>
+        {% if results %}
+          <ul>
+            {% for r in results %}
+              <li>
+                {{ r }}
+                &nbsp; <a href="/results/{{ r }}">下載</a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p>尚無結果。請先上傳並執行 `检测人流.py`。</p>
+        {% endif %}
+      </div>
+
+      <div style="margin-top:18px">
+        <form method="post" action="/run_detection">
+          <button type="submit">執行檢測（批次處理 video/ 內所有影片）</button>
+        </form>
+       
+      </div>
+    </div>
+  </body>
+</html>

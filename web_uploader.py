@@ -9,6 +9,11 @@ from ultralytics import YOLO
 import base64
 import time
 from io import BytesIO
+import threading
+import logging
+
+# 用於保護 YOLO 推論不被多執行緒同時呼叫
+model_lock = threading.Lock()
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = os.path.join(os.getcwd(), 'video')
@@ -23,7 +28,13 @@ last_detection_result = None  # 保存最後一次檢測結果
 def get_yolo_model():
     global yolo_model
     if yolo_model is None:
+        # 盡量在初始化時把模型固定在 CPU，並降低初始化輸出
         yolo_model = YOLO('yolov8n.pt')
+        try:
+            # 若模型有 .cpu() 方法，確保在 CPU 上（避免隱式 GPU 嘗試）
+            getattr(yolo_model, 'cpu', lambda: None)()
+        except Exception:
+            pass
     return yolo_model
 
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'hevc', 'h265'}
@@ -98,7 +109,8 @@ def camera():
 def api_detect():
     """接收圖像並運行 YOLO 檢測，返回標註結果"""
     global last_detection_result
-    
+
+    # 參數檢查
     if 'image' not in request.files:
         return jsonify({'error': '沒有圖像'}), 400
 
@@ -117,7 +129,22 @@ def api_detect():
 
         # 運行 YOLO 檢測（只檢測人類，類別 0）
         model = get_yolo_model()
-        results = model(frame, classes=[0], conf=0.5, verbose=False)
+
+        # 使用鎖定保護模型推論，避免多執行緒同時呼叫導致底層 C++ 錯誤
+        with model_lock:
+            try:
+                results = model(frame, classes=[0], conf=0.5, verbose=False)
+            except Exception as infer_err:
+                # 記錄並回報錯誤
+                app.logger.exception('Inference failed')
+                # 也寫入追蹤檔案方便後續檢查
+                try:
+                    os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
+                    with open(os.path.join(app.config['RESULTS_FOLDER'], 'inference_errors.log'), 'a') as lf:
+                        lf.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Inference error: {infer_err}\n")
+                except Exception:
+                    pass
+                return jsonify({'error': 'inference failed'}), 500
 
         # 繪製檢測框
         people_count = 0
@@ -157,6 +184,7 @@ def api_detect():
         })
 
     except Exception as e:
+        app.logger.exception('Unhandled error in /api/detect')
         return jsonify({'error': str(e)}), 500
 
 
@@ -190,4 +218,15 @@ def get_latest_image():
 
 
 if __name__ == '__main__':
+    # 預先載入模型以確認初始化階段發生在主執行緒（可避免 reloader 導致的多次初始化）
+    try:
+        logging.getLogger('ultralytics').setLevel(logging.WARNING)
+    except Exception:
+        pass
+
+    try:
+        get_yolo_model()
+    except Exception:
+        app.logger.exception('Failed to preload YOLO model')
+
     app.run(host='0.0.0.0', port=5000, debug=True)
